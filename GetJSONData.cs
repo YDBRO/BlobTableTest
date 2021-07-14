@@ -36,7 +36,7 @@ namespace YoungDon.Function
                     responseA = System.Text.Encoding.UTF8.GetString(msA.ToArray());
                 }
             }
-            return valueA; 
+            return responseA; 
         }
     }
 }
