@@ -7,6 +7,7 @@ using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Microsoft.Azure.Cosmos.Table;
 
 namespace YoungDon.Function
@@ -14,37 +15,62 @@ namespace YoungDon.Function
     public static class ReadTable
     {
         [FunctionName("ReadTable")]
-        public static void Run([HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)]
-            HttpRequest req, ILogger log, ExecutionContext context)
+        public static Task<string> Run([HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)]
+        HttpRequest req, ILogger log, ExecutionContext context)
         {
             string connStrA = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
             string requestBody = new StreamReader(req.Body).ReadToEnd();
             dynamic data = JsonConvert.DeserializeObject(requestBody);
             string PartitionKeyA = data.PartitionKey;
             string RowKeyA = data.RowKey;
-                        
+
             CloudStorageAccount stoA = CloudStorageAccount.Parse(connStrA);
             CloudTableClient tbC = stoA.CreateCloudTableClient();
             CloudTable tableA = tbC.GetTableReference("tableA");
-            ReadToTable(tableA, PartitionKeyA, RowKeyA);
+
+            string filterA = TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.GreaterThanOrEqual, PartitionKeyA);
+            string filterB = TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.GreaterThanOrEqual, RowKeyA);
+
+            Task<string> response = ReadToTable(tableA, filterA, filterB);
+            return response;
         }
 
-
-        static void ReadToTable(CloudTable tableA, string PartitionKeyA, string RowKeyA)
+        static async Task<string> ReadToTable(CloudTable tableA, string filterA, string filterB)
         {
-            MemoData memoA = new MemoData();
-            memoA.PartitionKey = PartitionKeyA;
-            memoA.RowKey = RowKeyA;
-            memoA.content = RowKeyA;
+            TableQuery<MemoData> rangeQ = new TableQuery<MemoData>().Where(
+                TableQuery.CombineFilters(filterA, TableOperators.And, filterB)
+            );
+            TableContinuationToken tokenA = null;
+            rangeQ.TakeCount = 1000;
+            JArray resultArr = new JArray();
+            try
+            {
+                do
+                {
+                    TableQuerySegment<MemoData> segment = await tableA.ExecuteQuerySegmentedAsync(rangeQ, tokenA);
+                    tokenA = segment.ContinuationToken;
+                    foreach (MemoData entity in segment)
+                    {
+                        JObject srcObj = JObject.FromObject(entity);
+                        //srcObj.Remove("Timestamp");
+                        resultArr.Add(srcObj);
+                    }
+                } while (tokenA != null);
+            }
+            catch (StorageException e)
+            {
+                Console.WriteLine(e.Message);
+                throw;
+            }
 
-            TableOperation operA = TableOperation.InsertOrReplace(memoA);
-            tableA.Execute(operA);
+            string resultA = Newtonsoft.Json.JsonConvert.SerializeObject(resultArr);
+            if (resultA != null) return resultA;
+            else return "No Data";
         }
 
-
-       private class MemoData : TableEntity
-       { 
-        public string content { get; set; }
-       }
+        private class MemoData : TableEntity
+        {
+            public string content { get; set; }
+        }
     }
 }
